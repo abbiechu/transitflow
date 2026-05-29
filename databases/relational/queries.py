@@ -771,3 +771,44 @@ def store_policy_document(
         with conn.cursor() as cur:
             cur.execute(sql, (title, category, content, vec_str, source_file))
             return cur.fetchone()[0]
+
+# ── VECTOR / RAG QUERIES ──────────────────────────────────────────────
+
+def search_policy(query: str, top_k: int = 3) -> list[dict]:
+    """
+    Search policy documents by semantic meaning (RAG).
+    
+    Converts user's natural language question to a vector,
+    then finds most similar policy documents using cosine distance.
+    
+    Args:
+        query: User's natural language question (e.g., "Can I get a refund?")
+        top_k: Number of top results to return (default 3)
+        
+    Returns:
+        List of relevant policy documents with similarity scores
+        
+    Example:
+        >>> search_policy("Can I get a refund for a delayed train?")
+        [
+            {
+                "title": "Delay Compensation Policy",
+                "category": "refund",
+                "content": "RF005: 30-59 minutes delay entitles to 50% refund...",
+                "similarity": 0.89
+            },
+            {
+                "title": "Booking Rules",
+                "category": "booking",
+                "content": "...",
+                "similarity": 0.45
+            }
+        ]
+    """
+    from skeleton.llm_provider import embed_text
+    
+    # Step 1: Embed the user's question using the active LLM
+    query_vector = embed_text(query)
+    
+    # Step 2: Build SQL for vector similarity search
+    sql = \"\"\"\n        SELECT\n            title,\n            category,\n            content,\n            1 - (embedding <=> %s::vector) AS similarity\n        FROM policy_documents\n        WHERE 1 - (embedding <=> %s::vector) > %s\n        ORDER BY embedding <=> %s::vector\n        LIMIT %s\n    \"\"\"\n    \n    # Convert embedding list to vector string for PostgreSQL\n    vec_str = \"[\" + \",\".join(str(x) for x in query_vector) + \"]\"\n    \n    with _connect() as conn:\n        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:\n            cur.execute(sql, (vec_str, vec_str, VECTOR_SIMILARITY_THRESHOLD, vec_str, top_k))\n            return [dict(row) for row in cur.fetchall()]\n```
